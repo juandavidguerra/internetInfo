@@ -1,0 +1,95 @@
+import requests
+from bs4 import BeautifulSoup
+import pandas as pd
+import json
+import time
+
+def clean_text(text):
+    """Cleans text by stripping and ensuring it's not None."""
+    return text.strip() if text else ''
+
+def extract_brand_info(response, category_name):
+    """Extracts brand information from the HTML response."""
+    soup = BeautifulSoup(response.text, 'html.parser')
+    brand_info_list = []
+
+    # Find all brand description blocks
+    brand_names = soup.find_all('div', class_='branddesc')
+
+    for brand in brand_names:
+        try:
+            marca = clean_text(brand.find('span', class_='color4').text)
+            company = clean_text(brand.find('span', class_='c666').text)
+            brand_intro = clean_text(brand.find('div', class_='history').text)
+            
+            brand_info = brand.find_next_sibling('div', class_='brandinfo font15')
+            legal_representative = clean_text(brand_info.find('div', class_='c999 brandfaren').find('span', class_='color2').text)
+            registered_capital = clean_text(brand_info.find('div', class_='c999 brandziben').find('span', class_='color2').text)
+            foundation_date = clean_text(brand_info.find('div', class_='c999 brandtime').find('span', class_='color2').text)
+
+            # Add extracted details to the list
+            brand_info_list.append({
+                'brand_name': marca,
+                'company_name': company,
+                'legal_representative': legal_representative,
+                'registered_capital': registered_capital,
+                'foundation_date': foundation_date,
+                'brand_intro': brand_intro,
+                'category': category_name
+            })
+
+        except AttributeError:
+            continue
+
+    return brand_info_list
+
+def fetch_url_with_retries(url, retries=3, delay=5):
+    """Fetch the URL with retry logic."""
+    for attempt in range(retries):
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                return response
+            print(f"Attempt {attempt + 1} failed: Status code {response.status_code}")
+        except requests.exceptions.RequestException as e:
+            print(f"Attempt {attempt + 1} failed: {e}")
+        
+        time.sleep(delay)
+    return None
+
+def process_urls_from_csv(csv_file, output_csv='brand_info.csv', output_json='brand_info.json'):
+    """Process URLs from the CSV file and extract brand information."""
+    urls_df = pd.read_csv(csv_file)
+    all_data = []
+
+    for _, row in urls_df.iterrows():
+        url = row['url']
+        category = row['category']
+        response = fetch_url_with_retries(url)
+
+        if response:
+            brand_info = extract_brand_info(response, category)
+            for brand in brand_info:
+                brand['url'] = url
+                all_data.append(brand)
+        else:
+            print(f"Failed to retrieve the webpage at {url} after multiple attempts.")
+
+    # Save data to both CSV and JSON
+    save_data(all_data, output_csv, output_json)
+
+def save_data(data, csv_file, json_file):
+    """Save extracted data to both CSV and JSON formats."""
+    df = pd.DataFrame(data)
+
+    # Save as CSV
+    df.to_csv(csv_file, index=False, encoding='utf-8')
+    print(f"Data saved to {csv_file}")
+
+    # Save as JSON
+    with open(json_file, 'w', encoding='utf-8') as file:
+        json.dump(data, file, indent=4, ensure_ascii=False)
+    print(f"Data saved to {json_file}")
+
+# Example usage:
+process_urls_from_csv('urls.csv')
